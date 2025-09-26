@@ -18,10 +18,16 @@ if (screen.width < COLUMNS) {
 }
 
 const DINO_INITIAL_TRUST = new Velocity(-11, 0);
+const DINO_SHORT_JUMP_TRUST = new Velocity(-7.5, 0);
 const ENVIRONMENT_GRAVITY = new Velocity(-0.6, 0);
 const DINO_FLOOR_INITIAL_POSITION = new Position(200, 10);
+const JUMP_THRESHOLD_MS = 200;
+const MAX_CHARGE_TIME_MS = 1000;
 let dino_current_trust = new Velocity(0, 0);
 let dino_ready_to_jump = true;
+let jump_key_press_start_time = null;
+let is_key_pressed = false;
+let charge_bar_visible = false;
 let game_over = null;
 let is_first_time = true;
 let game_score = null;
@@ -85,6 +91,44 @@ let harmfull_character_allocator = [
     )
 ]
 
+function calculateJumpVelocity(charge_duration) {
+    // Clamp charge duration between 0 and MAX_CHARGE_TIME_MS
+    const clampedDuration = Math.min(charge_duration, MAX_CHARGE_TIME_MS);
+    
+    // Calculate charge percentage (0 to 1)
+    const chargePercentage = clampedDuration / MAX_CHARGE_TIME_MS;
+    
+    // Interpolate between short jump and max jump velocities
+    const minVelocity = DINO_SHORT_JUMP_TRUST._y_speed;
+    const maxVelocity = DINO_INITIAL_TRUST._y_speed;
+    const jumpVelocity = minVelocity + (maxVelocity - minVelocity) * chargePercentage;
+    
+    return new Velocity(jumpVelocity, 0);
+}
+
+function drawChargeBar(charge_percentage) {
+    if (!charge_bar_visible || charge_percentage <= 0) return;
+    
+    const barWidth = 100;
+    const barHeight = 8;
+    const barX = 50;
+    const barY = 50;
+    
+    // Background bar
+    canvas_ctx.fillStyle = current_theme.layout[1]; // background color
+    canvas_ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+    
+    // Border
+    canvas_ctx.fillStyle = current_theme.layout[2]; // border color
+    canvas_ctx.fillRect(barX, barY, barWidth, barHeight);
+    
+    // Charge fill
+    const fillWidth = barWidth * charge_percentage;
+    canvas_ctx.fillStyle = charge_percentage < 0.2 ? "#ff6b6b" : 
+                          charge_percentage < 0.7 ? "#ffd93d" : "#6bcf7f";
+    canvas_ctx.fillRect(barX, barY, fillWidth, barHeight);
+}
+
 function initialize() {
     current_theme = themes.classic;
     cumulative_velocity = new Velocity(0, 0);
@@ -93,6 +137,12 @@ function initialize() {
     game_hi_score = localStorage.getItem("project.github.chrome_dino.high_score") || 0;
     canvas.height = ROWS;
     canvas.width = COLUMNS;
+    
+    // Reset jump tracking variables
+    jump_key_press_start_time = null;
+    is_key_pressed = false;
+    dino_ready_to_jump = true;
+    charge_bar_visible = false;
 
     harmless_characters_pool = [];
     harmfull_characters_pool = [
@@ -105,22 +155,85 @@ function initialize() {
             return;
         }
 
-        if (dino_ready_to_jump) {
+        if (dino_ready_to_jump && !is_key_pressed) {
+            is_key_pressed = true;
+            jump_key_press_start_time = Date.now();
+            charge_bar_visible = true;
+        }
+    };
+
+    document.ontouchend = () => {
+        if (is_key_pressed && dino_ready_to_jump && jump_key_press_start_time) {
+            const press_duration = Date.now() - jump_key_press_start_time;
+            is_key_pressed = false;
             dino_ready_to_jump = false;
-            dino_current_trust = DINO_INITIAL_TRUST.clone();
+            charge_bar_visible = false;
+            
+            dino_current_trust = calculateJumpVelocity(press_duration);
+            jump_key_press_start_time = null;
+        }
+    };
+
+    document.body.onmousedown = (event) => {
+        if (game_over && (Date.now() - game_over) > 1000) {
+            main();
+            return;
+        }
+
+        if (dino_ready_to_jump && !is_key_pressed) {
+            is_key_pressed = true;
+            jump_key_press_start_time = Date.now();
+            charge_bar_visible = true;
+        }
+    };
+
+    document.body.onmouseup = (event) => {
+        if (is_key_pressed && dino_ready_to_jump && jump_key_press_start_time) {
+            const press_duration = Date.now() - jump_key_press_start_time;
+            is_key_pressed = false;
+            dino_ready_to_jump = false;
+            charge_bar_visible = false;
+            
+            dino_current_trust = calculateJumpVelocity(press_duration);
+            jump_key_press_start_time = null;
         }
     };
 
     document.body.onclick = () => {
-        if (game_over) {
-            document.ontouchstart();
-        }
+        // Click is handled by mousedown/mouseup for charging
     };
 
     document.body.onkeydown = event => {
         // keyCode is depricated
         if (event.keyCode === 32 || event.key === ' ') {
-            document.ontouchstart();
+            event.preventDefault(); // Prevent page scroll
+            
+            if (game_over && (Date.now() - game_over) > 1000) {
+                main();
+                return;
+            }
+
+            if (dino_ready_to_jump && !is_key_pressed) {
+                is_key_pressed = true;
+                jump_key_press_start_time = Date.now();
+                charge_bar_visible = true;
+            }
+        }
+    };
+
+    document.body.onkeyup = event => {
+        if (event.keyCode === 32 || event.key === ' ') {
+            event.preventDefault(); // Prevent page scroll
+            
+            if (is_key_pressed && dino_ready_to_jump && jump_key_press_start_time) {
+                const press_duration = Date.now() - jump_key_press_start_time;
+                is_key_pressed = false;
+                dino_ready_to_jump = false;
+                charge_bar_visible = false;
+                
+                dino_current_trust = calculateJumpVelocity(press_duration);
+                jump_key_press_start_time = null;
+            }
         }
     };
 }
@@ -171,6 +284,13 @@ function event_loop() {
     canvas_ctx.font = "20px Arcade";
     canvas_ctx.fillStyle = current_theme.score_text;
     canvas_ctx.fillText(`H I     ${Math.floor(game_hi_score).toString().padStart(4, '0').split('').join(" ")}     ${game_score.toString().padStart(4, '0').split('').join(" ")}`, canvas.width - 200, 20);
+
+    // charge bar display
+    if (charge_bar_visible && is_key_pressed && jump_key_press_start_time) {
+        const current_charge_time = Date.now() - jump_key_press_start_time;
+        const charge_percentage = Math.min(current_charge_time / MAX_CHARGE_TIME_MS, 1.0);
+        drawChargeBar(charge_percentage);
+    }
 
     // first time
     if (is_first_time) {
