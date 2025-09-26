@@ -6,5 +6,11 @@ module.exports = {
     path: path.resolve(__dirname),
     filename: "output.js"
   },
-  mode: "production"
+  mode: "development",
+  devServer: {
+    contentBase: path.join(__dirname),
+    port: 3000,
+    open: true,
+    hot: true
+  }
 };
